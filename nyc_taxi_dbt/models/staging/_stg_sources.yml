@@ -1,0 +1,89 @@
+version: 2
+
+sources:
+  - name: raw_taxi_dataset
+    database: nyc-taxi-gcp-494519
+    schema: raw_taxi_dataset
+    tables:
+      - name: raw_yellow_tripdata
+      - name: raw_green_tripdata
+
+
+models:
+  - name: stg_yellow_tripdata
+    description: "Cleaned and flagged yellow taxi trips from raw source"
+    columns:
+      - name: vendor_id
+        tests: [not_null]
+      - name: pickup_datetime
+        tests: [not_null]
+      - name: dropoff_datetime
+        tests: [not_null]
+      - name: total_amount
+        tests: [not_null]
+      - name: pu_location_id
+        tests:
+          - not_null
+          - relationships:
+              to: ref('dim_zones')
+              field: location_id
+      - name: do_location_id
+        tests:
+          - not_null
+          - relationships:
+              to: ref('dim_zones')
+              field: location_id
+      - name: payment_type
+        tests:
+          - accepted_values:
+              values: [0, 1, 2, 3, 4, 5, 6]
+      - name: taxi_type
+        tests:
+          - accepted_values:
+              values: ['yellow']
+      - name: is_invalid_trip
+        tests: [not_null]
+      - name: reconciliation_status
+        tests:
+          - accepted_values:
+              values: ['reconciled', 'underreported_components', 'overcounted_components']
+
+  - name: stg_green_tripdata
+    description: "Cleaned and flagged green taxi trips from raw source"
+    columns:
+      - name: vendor_id
+        tests: [not_null]
+      - name: pickup_datetime
+        tests: [not_null]
+      - name: dropoff_datetime
+        tests: [not_null]
+      - name: total_amount
+        tests: [not_null]
+      - name: pu_location_id
+        tests:
+          - not_null
+          - relationships:
+              to: ref('dim_zones')
+              field: location_id
+      - name: do_location_id
+        tests:
+          - not_null
+          - relationships:
+              to: ref('dim_zones')
+              field: location_id
+      - name: payment_type
+        tests:
+          - accepted_values:
+              values: [0, 1, 2, 3, 4, 5, 6]
+      - name: taxi_type
+        tests:
+          - accepted_values:
+              values: ['green']
+      - name: is_invalid_trip
+        tests: [not_null]
+      - name: trip_type
+        tests:
+          - accepted_values:
+              values: [1, 2]
+              config:
+                severity: warn  # warn only — nulls expected for some records

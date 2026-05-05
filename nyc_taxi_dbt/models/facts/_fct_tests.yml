@@ -1,0 +1,26 @@
+version: 2
+
+models:
+  - name: fct_trips
+    description: "One row per valid completed trip, enriched with dimensions"
+    columns:
+      - name: trip_id
+        tests:
+          - not_null
+          - unique        # surrogate key must be unique
+      - name: pickup_datetime
+        tests: [not_null]
+      - name: total_amount
+        tests: [not_null]
+      - name: revenue_per_mile
+        tests: [not_null]
+      - name: pu_borough
+        tests: [not_null]
+      - name: taxi_type
+        tests:
+          - accepted_values:
+              values: ['yellow', 'green']
+      - name: payment_type
+        tests:
+          - accepted_values:
+              values: [1, 2]  # fct_trips only has valid payment types
