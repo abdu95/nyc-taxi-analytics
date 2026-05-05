@@ -37,6 +37,7 @@ models:
         tests:
           - accepted_values:
               values: [0, 1, 2, 3, 4, 5, 6]
+              quote: false # generate the values without quotes
       - name: taxi_type
         tests:
           - accepted_values:
@@ -75,6 +76,7 @@ models:
         tests:
           - accepted_values:
               values: [0, 1, 2, 3, 4, 5, 6]
+              quote: false # generate the values without quotes
       - name: taxi_type
         tests:
           - accepted_values:
@@ -85,5 +87,6 @@ models:
         tests:
           - accepted_values:
               values: [1, 2]
+              quote: false # generate the values without quotes
               config:
                 severity: warn  # warn only — nulls expected for some records

@@ -24,3 +24,4 @@ models:
         tests:
           - accepted_values:
               values: [1, 2]  # fct_trips only has valid payment types
+              quote: false # generate the values without quotes

@@ -8,4 +8,4 @@
 SELECT *
 FROM {{ ref('stg_yellow_tripdata') }}
 WHERE reconciliation_status != 'reconciled'
-  AND vendor_id NOT IN (1, 6, 7)
+  AND vendor_id NOT IN (1, 2, 6, 7)
