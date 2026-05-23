@@ -35,8 +35,8 @@ WITH trips_base AS (
                 t.do_location_id,
                 t.vendor_id,
                 t.taxi_type,
-                t.fare_amount,
-                t.total_amount
+                CAST(t.fare_amount AS NUMERIC),   -- ← cast FLOAT64 to NUMERIC
+                CAST(t.total_amount AS NUMERIC)   -- ← cast FLOAT64 to NUMERIC
             ORDER BY t.pickup_datetime
         ) AS rn
 
