@@ -104,13 +104,11 @@ SELECT
     reconciliation_status,
 
     -- North Star: revenue per mile
-    SAFE_DIVIDE(total_amount, trip_distance)        AS revenue_per_mile,
-
-    -- revenue per minute
-    SAFE_DIVIDE(total_amount, trip_duration_min)    AS revenue_per_min,
-
-    -- tip rate
-    SAFE_DIVIDE(tip_amount, fare_amount)            AS tip_rate,
+    {{ revenue_per('total_amount', 'trip_distance') }}      AS revenue_per_mile,
+    -- revenue per minute 
+    {{ revenue_per('total_amount', 'trip_duration_min') }}  AS revenue_per_min,
+    
+    {{ revenue_per('tip_amount', 'fare_amount') }}          AS tip_rate,
 
     -- revenue per passenger
     SAFE_DIVIDE(total_amount, passenger_count)      AS revenue_per_passenger

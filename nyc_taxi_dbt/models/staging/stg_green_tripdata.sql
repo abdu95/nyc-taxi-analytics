@@ -42,26 +42,10 @@ SELECT
         MINUTE
     )                                                   AS trip_duration_min,
 
-    -- derived: reconciliation (from our earlier analysis)
-    COALESCE(fare_amount, 0)
-        + COALESCE(extra, 0)
-        + COALESCE(mta_tax, 0)
-        + COALESCE(tip_amount, 0)
-        + COALESCE(tolls_amount, 0)
-        + COALESCE(improvement_surcharge, 0)
-        + COALESCE(congestion_surcharge, 0)
-        + COALESCE(cbd_congestion_fee, 0)               AS calculated_total,
+    -- derived: reconciliation 
+    {{ calculate_fare_components() }}  AS calculated_total,
 
-    total_amount - (
-        COALESCE(fare_amount, 0)
-        + COALESCE(extra, 0)
-        + COALESCE(mta_tax, 0)
-        + COALESCE(tip_amount, 0)
-        + COALESCE(tolls_amount, 0)
-        + COALESCE(improvement_surcharge, 0)
-        + COALESCE(congestion_surcharge, 0)
-        + COALESCE(cbd_congestion_fee, 0)
-    )                                                   AS reporting_gap,
+    total_amount - {{ calculate_fare_components() }}  AS reporting_gap,
 
     CASE
         WHEN ABS(total_amount - (

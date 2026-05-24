@@ -9,7 +9,7 @@ SELECT
     SUM(total_amount)                               AS gross_revenue,
     AVG(trip_duration_min)                          AS avg_trip_duration_min,
     AVG(revenue_per_mile)                           AS avg_revenue_per_mile,
-
+    EXTRACT(DAYOFWEEK FROM pickup_datetime)     AS day_of_week_num,
     -- busiest combo flag
     RANK() OVER (
         ORDER BY COUNT(*) DESC

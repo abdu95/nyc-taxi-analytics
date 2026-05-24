@@ -209,3 +209,108 @@ END AS reconciliation_status
 This turns a data quality issue into a documented, queryable metric — which is exactly what a reviewer at Infinite Lambda would want to see.
 
 
+
+The dataset is public TLC data so there's no real PII — but the most defensible choice for the interview is hashing, specifically on vendor_id.
+Here's the business justification: in a real production context, vendor_id maps to contractual commercial relationships between TLC and vendors (VeriFone, Creative Mobile, Helix). Revenue performance by vendor is commercially sensitive — you wouldn't want all analysts to see which vendor processes the most revenue or has the worst data quality. You'd hash it in marts exposed to wider audiences, keeping the raw mapping only in the raw/staging layer.
+
+
+This is actually what you've already built architecturally — the marts deliberately aggregate away from raw location IDs. You just need to make the intent explicit by adding policy tags in BigQuery and documenting it.
+That's a real data governance story: "We deliberately don't expose raw location IDs in marts because timestamp + precise zone = potential re-identification risk. Borough-level aggregation in the mart layer is intentional."
+
+
+"This is public data with no PII. However, I've implemented the architectural equivalent of access control — raw zone IDs and timestamps are only available in staging, marts deliberately expose borough-level aggregations. In a production context with real transaction IDs or driver IDs, I would implement hashing at the staging layer."
+
+
+Back to PULocationID / DOLocationID — this is the real one. And the masking approach is actually already implemented in our architecture:
+
+Raw/staging layer → exact zone IDs (pu_location_id, do_location_id)
+Marts → borough level only (pu_borough, do_borough)
+
+That is masking. We're reducing precision deliberately.
+The only thing missing is making the intent explicit in dbt via column descriptions:
+yaml- name: pu_location_id
+  description: >
+    Raw pickup zone ID. Masked to borough level in mart layer
+    to prevent re-identification of individual passenger journeys
+    via location + timestamp combination.
+And in marts:
+yaml- name: pu_borough
+  description: >
+    Pickup borough — masked aggregation of pu_location_id.
+    Deliberately exposed at borough level only to protect passenger privacy.
+Interview story:
+"Location IDs combined with timestamps create re-identification risk. I mask exact zone IDs to borough level in the mart layer. This is enforced architecturally — analysts only have access to mart models which never expose raw zone IDs."
+
+
+
+
+📊 All Extractable Business Metrics
+💰 Revenue Metrics (Primary)
+MetricFormulaBusiness ValueRevenue per Mile ⭐total_amount / trip_distanceCore efficiency KPIRevenue per Minutetotal_amount / trip_duration_minTime efficiencyGross Revenue by ZoneSUM(total_amount) GROUP BY PULocationIDDemand heatmapAirport Revenue PremiumAvg total_amount where airport_fee > 0 vs standardPricing strategyRevenue by Rate TypeSUM(total_amount) GROUP BY RatecodeIDJFK vs standard mix
+🚗 Operational Metrics
+MetricFormulaBusiness ValueDriver Utilization (proxy) ⭐Trips per hour per zoneSupply/demand balanceAvg Trip Durationtpep_dropoff_datetime - tpep_pickup_datetimeOperational planningTrips per Time SlotCOUNT(*) GROUP BY HOUR(pickup)Peak hours detectionRush Hour vs Off-Peak Volumeextra > 0 flag analysisSurge pricing impact
+👤 Customer Metrics
+MetricFormulaBusiness ValueTip Ratetip_amount / fare_amountSatisfaction proxyRevenue per Passengertotal_amount / passenger_countYield per seatCash vs Card SplitCOUNT(*) GROUP BY payment_typePayment behaviorGroup Ride ShareTrips where RatecodeID = 6Pooling opportunity
+📍 Geographic Metrics
+MetricFormulaBusiness ValueTop Pickup ZonesCOUNT(*) GROUP BY PULocationIDHotspot analysisAvg Fare by BoroughJoin zone lookup → aggregateGeographic pricingAirport Trip Shareairport_fee > 0 as % of total trips~8% of yellow taxi rides have an airport fee Rowzero — baseline to beat
+
+🎯 Recommended North Star Metric for the Task
+Revenue per Mile by Zone & Time of Day — because it combines:
+
+A single quantifiable number ✅
+Geographic dimension (zones → boroughs) ✅
+Temporal dimension (rush hour vs off-peak) ✅
+Direct business decision: where and when should drivers operate?
+
+
+🗂️ Suggested dbt Model Structure
+raw.tlc_trips
+    ↓
+stg_tlc__trips          -- clean types, derived duration, trip_revenue
+stg_tlc__zones          -- zone → borough lookup (joinable)
+    ↓
+fct_trips               -- grain: 1 row per trip
+dim_zones               -- PULocationID/DOLocationID enrichment
+dim_time                -- hour, day_of_week, is_rush_hour
+    ↓
+mart_driver_performance -- revenue_per_mile, utilization_rate
+mart_zone_demand        -- trips/revenue by zone & time slot
+
+
+
+✅ Final Metric Set
+🌟 North Star
+
+Revenue per Mile — by Zone & Time of Day
+
+💰 Revenue
+
+Gross Revenue by Zone / Borough
+Airport Revenue Premium
+Revenue by Rate Type (JFK vs Standard vs Newark)
+
+🚗 Operational
+
+Avg Trip Duration ⭐ (new)
+Driver Utilization (trips per hour per zone)
+Rush Hour vs Off-Peak Volume
+
+📅 Demand Patterns
+
+Busiest Days of Week ⭐ (new) — COUNT(*) GROUP BY DAY_OF_WEEK(pickup)
+Trips by Hour of Day
+Peak Zone by Day/Hour combo
+
+👤 Customer
+
+Tip Rate
+Revenue per Passenger
+Cash vs Card Split
+
+
+🗺️ How Trip Duration & Busiest Days Strengthen the Story
+Trip Duration  →  reveals where drivers LOSE time (long trips, low $/mile)
+Busiest Days   →  tells operations WHEN to deploy more supply
+Combined       →  "Thursday rush hour, Midtown → JFK = highest $/mile + longest duration"
+                   = the single best shift for a driver
+This gives you a complete operations intelligence story: where, when, and how long — all feeding into the north star of Revenue per Mile.

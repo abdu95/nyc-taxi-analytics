@@ -11,10 +11,7 @@ SELECT DISTINCT
         WHEN EXTRACT(DAYOFWEEK FROM pickup_datetime) IN (1, 7) THEN TRUE
         ELSE FALSE
     END                                          AS is_weekend,
-    CASE
-        WHEN EXTRACT(HOUR FROM pickup_datetime) BETWEEN 7 AND 9   THEN 'morning_rush'
-        WHEN EXTRACT(HOUR FROM pickup_datetime) BETWEEN 17 AND 19 THEN 'evening_rush'
-        WHEN EXTRACT(HOUR FROM pickup_datetime) BETWEEN 0 AND 5   THEN 'overnight'
-        ELSE 'off_peak'
-    END                                          AS time_slot
+    
+    {{ classify_time_of_day('pickup_datetime') }} AS time_slot
+
 FROM {{ ref('int_trips_unioned') }}
