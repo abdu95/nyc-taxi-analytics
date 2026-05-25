@@ -198,6 +198,10 @@ dev            → PR to main → GitHub Actions runs dbt test → merge if gree
 5. Runs `dbt compile` to catch syntax errors
 6. Runs `dbt test --select staging` to validate data quality
 
+
+![dbt checks in Pull Request](ci-cd-checks.png)
+
+
 ## Why staging only in CI?
 
 - Fast — completes in under 30 seconds
