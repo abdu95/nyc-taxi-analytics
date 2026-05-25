@@ -1,0 +1,56 @@
+name: dbt CI
+
+on:
+  pull_request:
+    branches:
+      - dev
+      - main
+
+jobs:
+  dbt-test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      - name: Install dbt
+        run: pip install dbt-bigquery==1.8.2
+
+      - name: Set up GCP credentials
+        run: |
+          echo '${{ secrets.GCP_SERVICE_ACCOUNT_KEY }}' > /tmp/keyfile.json
+
+      - name: Set up dbt profiles
+        run: |
+          mkdir -p ~/.dbt
+          cat > ~/.dbt/profiles.yml << EOF
+          nyc_taxi_dbt:
+            target: ci
+            outputs:
+              ci:
+                type: bigquery
+                method: service-account
+                project: nyc-taxi-gcp-494519
+                dataset: dbt_taxi_dataset_ci
+                location: US
+                threads: 4
+                keyfile: /tmp/keyfile.json
+          EOF
+
+      - name: Run dbt deps
+        working-directory: nyc_taxi_dbt
+        run: dbt deps
+
+      - name: Run dbt compile
+        working-directory: nyc_taxi_dbt
+        run: dbt compile
+
+      - name: Run dbt test
+        working-directory: nyc_taxi_dbt
+        run: dbt test --select staging

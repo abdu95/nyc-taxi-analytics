@@ -147,6 +147,36 @@ erDiagram
 ![dbt Lineage Graph](lineage.png)
 
 
+
+# Git Branching Strategy
+
+Three-branch workflow:
+
+```
+main          ← production, always stable and deployable
+dev           ← integration branch, tested code merged here first
+feature/xxx   ← one branch per feature, model, or fix
+```
+
+## Workflow
+
+```
+feature/add-reconciliation-metrics
+        ↓ Pull Request → code review
+       dev
+        ↓ Pull Request → stable release
+      main
+```
+
+## Rules
+
+- Never commit directly to `main`
+- Every change starts as a `feature/` branch cut from `dev`
+- Feature branch → PR to `dev` → review → merge
+- `dev` → PR to `main` → only when stable and tested
+- dbt tests must pass before any PR is merged
+
+
 ---
 
 ## North Star Metric
