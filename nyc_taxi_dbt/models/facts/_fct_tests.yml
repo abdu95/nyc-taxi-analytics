@@ -2,7 +2,7 @@ version: 2
 
 models:
   - name: fct_trips
-    description: "One row per valid completed trip, enriched with dimensions"
+    description: "Grain: one row per valid completed trip. Incremental model — merges new monthly data. Deduplicated via ROW_NUMBER() to handle known VeriFone duplicate submissions. Only credit card and cash trips included (payment_type IN (1,2)). Raw zone IDs joined to borough/zone names — mart layer intentionally exposes borough level only for privacy."
     columns:
       - name: trip_id
         tests:

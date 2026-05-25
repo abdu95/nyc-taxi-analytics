@@ -1,316 +1,350 @@
-payment types are defined as: 
-0 = Flex Fare trip, 1 = Credit card, 2 = Cash, 3 = No charge, 4 = Dispute, 5 = Unknown, 6 = Voided trip. 
-Include in revenue: 1 and 2
+# NYC Taxi Analytics — Architecture
+
+## Stack
+- **Ingestion**: Airflow + Python → GCS → BigQuery
+- **Transformation**: dbt Core + BigQuery
+- **BI**: Looker Studio
+
+---
+
+## Modeling Approach
+Dimensional modeling with Medallion Architecture (Bronze → Silver → Gold).
+
+---
+
+## Layer Structure
+
+```
+Raw Layer (BigQuery) — Bronze
+    Airflow ingests monthly parquet files from TLC → GCS → BigQuery
+    raw_yellow_tripdata
+    raw_green_tripdata
+
+        ↓ dbt staging
+
+Staging Layer (dbt views) — Silver
+    stg_yellow_tripdata — cleaned, typed, flagged, fare reconciliation metrics
+    stg_green_tripdata  — same + green-specific trip_type, NULL airport columns
+
+        ↓ dbt intermediate
+
+Intermediate Layer (dbt view) — Silver
+    int_trips_unioned   — yellow + green unioned into identical schema
+
+        ↓ dbt dimensions + facts
+
+Dimensions (dbt tables) — Gold
+    dim_zones           — LocationID → Borough → Zone mapping (from seed)
+    dim_time            — hour, day_of_week, time_slot, is_weekend
+
+Facts (dbt incremental table) — Gold
+    fct_trips           — one row per valid deduplicated trip, fully enriched
+
+        ↓ dbt marts
+
+Marts (dbt tables) — Gold
+    mart_revenue            — gross revenue by borough, rate type, month
+    mart_zone_demand        — trips and revenue per mile by zone and time slot
+    mart_driver_performance — utilization and duration by zone and hour
+    mart_demand_patterns    — busiest days and hours
+    mart_customer_behavior  — tip rate, payment split, revenue per passenger
+```
 
 
-Strategy — handle in dbt, not in ingestion:
-This is the key architectural decision. Your raw layer should preserve everything as-is — negatives included. You handle data quality in dbt staging models. This is the correct modern data engineering approach:
-raw layer (BigQuery)     → keep all rows including negatives
-    ↓ dbt staging        → document, flag, filter negatives
-    ↓ dbt marts          → only valid trips for business metrics
-    ↓ Looker Studio      → clean numbers
-In your dbt staging model you will:
-sql-- stg_yellow_taxi.sql
-SELECT
-    *,
-    -- flag suspicious records
-    CASE
-        WHEN fare_amount <= 0     THEN TRUE
-        WHEN trip_distance <= 0   THEN TRUE
-        WHEN total_amount <= 0    THEN TRUE
-        ELSE FALSE
-    END AS is_invalid_trip
+## Documentation
 
-FROM {{ source('raw_taxi_dataset', 'yellow_tripdata_2024_01') }}
-Then in your mart model you simply filter:
-sql-- mart_trip_revenue.sql
-SELECT * FROM {{ ref('stg_yellow_taxi') }}
-WHERE is_invalid_trip = FALSE
-This way:
+Full column-level documentation, model descriptions, and lineage graph
+are available via dbt docs:
 
-Raw data is untouched ✅
-You have full auditability (can always see how many were filtered) ✅
-Business metrics are clean ✅
-Infinite Lambda can see you understand the separation of concerns ✅
+```bash
+dbt docs generate
+dbt docs serve
+```
 
 
+---
 
-In your mart layer you build two separate models:
-mart_trip_revenue.sql — operational revenue:
-sql-- Only real, completed, paid trips
-SELECT *
-FROM {{ ref('stg_yellow_taxi') }}
-WHERE payment_type IN (1, 2)   -- credit card and cash only
-  AND fare_amount > 0
-  AND trip_distance > 0
-mart_trip_adjustments.sql — disputes, voids, refunds:
-sql-- Separate view of financial adjustments
-SELECT
-    payment_type,
-    CASE payment_type
-        WHEN 3 THEN 'No Charge'
-        WHEN 4 THEN 'Dispute'
-        WHEN 6 THEN 'Voided'
-    END                          AS adjustment_type,
-    COUNT(*)                     AS trip_count,
-    SUM(fare_amount)             AS total_adjustment_amount,
-    SUM(total_amount)            AS total_amount_adjusted
-FROM {{ ref('stg_yellow_taxi') }}
-WHERE payment_type IN (3, 4, 6)
-   OR fare_amount <= 0
-GROUP BY 1, 2
+## ERD
 
+## ERD
 
+```mermaid
+erDiagram
+  taxi_zone_lookup {
+    int LocationID PK
+    string Borough
+    string Zone
+    string service_zone
+  }
+  dim_zones {
+    int location_id PK
+    string borough
+    string zone
+    string service_zone
+  }
+  dim_time {
+    timestamp hour_timestamp PK
+    int hour_of_day
+    string day_of_week_name
+    string time_slot
+    bool is_weekend
+  }
+  fct_trips {
+    string trip_id PK
+    timestamp pickup_datetime
+    string pu_borough
+    string do_borough
+    string time_slot
+    float total_amount
+    float revenue_per_mile
+    float tip_rate
+  }
+  mart_revenue {
+    string pu_borough
+    string rate_code_desc
+    int year
+    int month
+    float gross_revenue
+    float avg_revenue_per_mile
+  }
+  mart_zone_demand {
+    string pu_zone
+    string time_slot
+    string day_of_week_name
+    int total_trips
+    float avg_revenue_per_mile
+  }
+  mart_driver_performance {
+    string pu_zone
+    int hour_of_day
+    float avg_trip_duration_min
+    float avg_revenue_per_mile
+  }
+  mart_demand_patterns {
+    string day_of_week_name
+    int hour_of_day
+    int total_trips
+    int demand_rank
+  }
+  mart_customer_behavior {
+    string payment_type_desc
+    float avg_tip_rate
+    float payment_type_share
+    float gross_revenue
+  }
 
-check_bucket ──┐
-               ├──► check_tables ──┐
-check_dataset ─┘                   │
-                                   ▼
-check_bucket ──► upload_[type]_[month] ──► load_[type]_[month]
-
-
-
-"The total amount charged to passengers. Does not include cash tips."
-
-So it's the sum of all the itemized charge columns:
-ComponentDescriptionfare_amountTime-and-distance fare from the meterextraMiscellaneous extras and surchargesmta_taxTax triggered by the metered ratetip_amountCredit card tips only (cash tips excluded)tolls_amountAll tolls paid during the tripimprovement_surchargeSurcharge assessed at flag drop (since 2015)congestion_surchargeNYS congestion surchargeairport_feeFee for pickups at LGA or JFKcbd_congestion_feeMTA Congestion Relief Zone charge (since Jan 5, 2025)
-One important note for your dbt models: cash tips are excluded from total_amount. This is worth calling out in your column descriptions or tests, especially if you're building any fare analysis metrics.
-
-
-
-⬜ Step 6 - dbt project (staging → marts → metrics)
-⬜ Step 7 - Cosmos (wire dbt into Airflow)
-⬜ Step 8 - GCP VM (move everything to cloud)
-⬜ Step 9 - Looker Studio dashboard
-⬜ Step 10 - GitHub + README (submission)
-
-
-1. Negative Values in Fare Columns
-The TLC documentation does not explicitly explain negative values — this is a known data quality issue in the raw dataset. Here's what the community and data practitioners have established as the causes:
-Why negatives exist:
-ColumnLikely cause of negativefare_amountDisputed trips, refunds, or vendor submission errorsextraCorrection entries reversing a previously recorded surchargemta_taxSame — reversal/correction recordstip_amountCredit card tip reversals or chargebackstotal_amountCascading effect — if fare is negative, total follows
-Payment type code 4 means "Dispute" and code 6 means "Voided trip" — these are the most common legitimate sources of negative amounts. A disputed or voided trip gets recorded as a negative correction entry. NYC Open Data
-The important insight: These are not random errors. They are real bookkeeping events — a refund is as real as a charge. The question is whether they belong in your business metric.
-
-Strategy — handle in dbt, not in ingestion:
-This is the key architectural decision. Your raw layer should preserve everything as-is — negatives included. You handle data quality in dbt staging models. This is the correct modern data engineering approach:
-raw layer (BigQuery)     → keep all rows including negatives
-    ↓ dbt staging        → document, flag, filter negatives
-    ↓ dbt marts          → only valid trips for business metrics
-    ↓ Looker Studio      → clean numbers
-In your dbt staging model you will:
-sql-- stg_yellow_taxi.sql
-SELECT
-    *,
-    -- flag suspicious records
-    CASE
-        WHEN fare_amount <= 0     THEN TRUE
-        WHEN trip_distance <= 0   THEN TRUE
-        WHEN total_amount <= 0    THEN TRUE
-        ELSE FALSE
-    END AS is_invalid_trip
-
-FROM {{ source('raw_taxi_dataset', 'yellow_tripdata_2024_01') }}
-Then in your mart model you simply filter:
-sql-- mart_trip_revenue.sql
-SELECT * FROM {{ ref('stg_yellow_taxi') }}
-WHERE is_invalid_trip = FALSE
-This way:
-
-Raw data is untouched ✅
-You have full auditability (can always see how many were filtered) ✅
-Business metrics are clean ✅
-Infinite Lambda can see you understand the separation of concerns ✅
+  taxi_zone_lookup ||--|| dim_zones : "seeded into"
+  dim_zones ||--o{ fct_trips : "pu/do location"
+  dim_time ||--o{ fct_trips : "pickup hour"
+  fct_trips ||--o{ mart_revenue : "aggregated"
+  fct_trips ||--o{ mart_zone_demand : "aggregated"
+  fct_trips ||--o{ mart_driver_performance : "aggregated"
+  fct_trips ||--o{ mart_demand_patterns : "aggregated"
+  fct_trips ||--o{ mart_customer_behavior : "aggregated"
+```
 
 
-1. Payment Types — Official Definition
-According to the TLC data dictionary, payment types are defined as: 0 = Flex Fare trip, 1 = Credit card, 2 = Cash, 3 = No charge, 4 = Dispute, 5 = Unknown, 6 = Voided trip. Socrata
-So there IS a type 6 — you may just not have any voided trips in your January 2024 sample. Also note type 0 (Flex Fare) is new and wasn't in older versions of the dictionary — that's why some sources list only 1–5.
-This is directly relevant to your negative values question — types 3, 4, and 6 are the primary sources.
+## Lineage
 
-2. Strategy for Negative Values — Let's Think This Through
-Here's the mental model to anchor on:
-What is your business metric?
-You said revenue. So the question becomes: what is "revenue" for a taxi operator?
-Revenue = money actually collected from passengers for completed trips.
-With that definition, here's how each payment type maps:
-Payment TypeNegative possible?Include in revenue?Reasoning1 — Credit cardYes (chargeback)✅ YesReal completed trip2 — CashRarely✅ YesReal completed trip3 — No chargeYes❌ NoNo money exchanged4 — DisputeYes❌ Exclude from revenueContested, unresolved5 — UnknownSometimes⚠️ Flag separatelyCan't confirm6 — VoidedYes❌ NoTrip never happened
-
-The Right Architecture — Three Layers of Truth
-This is where dbt shines. You build three perspectives on the same data:
-raw layer          → everything, untouched, negatives and all
-    ↓
-stg layer          → cleaned, typed, flagged, no filtering yet
-    ↓
-mart layer         → business-purpose tables, filtered by intent
-In your mart layer you build two separate models:
-mart_trip_revenue.sql — operational revenue:
-sql-- Only real, completed, paid trips
-SELECT *
-FROM {{ ref('stg_yellow_taxi') }}
-WHERE payment_type IN (1, 2)   -- credit card and cash only
-  AND fare_amount > 0
-  AND trip_distance > 0
-mart_trip_adjustments.sql — disputes, voids, refunds:
-sql-- Separate view of financial adjustments
-SELECT
-    payment_type,
-    CASE payment_type
-        WHEN 3 THEN 'No Charge'
-        WHEN 4 THEN 'Dispute'
-        WHEN 6 THEN 'Voided'
-    END                          AS adjustment_type,
-    COUNT(*)                     AS trip_count,
-    SUM(fare_amount)             AS total_adjustment_amount,
-    SUM(total_amount)            AS total_amount_adjusted
-FROM {{ ref('stg_yellow_taxi') }}
-WHERE payment_type IN (3, 4, 6)
-   OR fare_amount <= 0
-GROUP BY 1, 2
-
-Why This Is the Right Answer for Infinite Lambda
-This approach demonstrates exactly what a senior analytics engineer thinks about:
-1. Don't destroy data — raw layer is sacred, never filtered. If someone later wants to analyze disputes, the data is there.
-2. Separate concerns — revenue analytics and adjustment analytics are different questions answered by different models.
-3. Explicit business logic — filtering rules live in dbt SQL with comments, not buried in a Python script or a dashboard filter nobody notices.
-4. Auditability — you can always reconcile: mart_trip_revenue + mart_trip_adjustments should account for everything in raw.
-
-Your Business Metric Statement (for the submission)
-Frame it like this:
-
-"Our primary metric is Gross Trip Revenue — defined as the sum of fare_amount for completed trips paid by credit card or cash (payment types 1 and 2), excluding disputed, voided, and zero-fare trips. Adjustments and disputes are tracked separately in mart_trip_adjustments for operational monitoring."
-
-That one paragraph shows Infinite Lambda you understand the difference between data engineering and data governance. 
+![dbt Lineage Graph](lineage.png)
 
 
-- stg_green_tripdata
-- stg_yellow_tripdata
+---
 
+## North Star Metric
 
-For your dbt model, rather than trying to "fix" total_amount, I'd create a calculated_total metric and flag the reconciliation gap:
-sql-- in your mart model
-COALESCE(fare_amount, 0)
-+ COALESCE(extra, 0)
-+ COALESCE(mta_tax, 0)
-+ COALESCE(tip_amount, 0)
-+ COALESCE(tolls_amount, 0)
-+ COALESCE(improvement_surcharge, 0)
-+ COALESCE(congestion_surcharge, 0)
-+ COALESCE(Airport_fee, 0)
-+ COALESCE(cbd_congestion_fee, 0) AS calculated_total,
+**Revenue per Mile by Zone and Time of Day**
 
-total_amount - calculated_total   AS reporting_gap,
+```sql
+SAFE_DIVIDE(total_amount, trip_distance) AS revenue_per_mile
+```
 
-CASE
-    WHEN ABS(total_amount - calculated_total) <= 0.01 THEN 'reconciled'
-    WHEN total_amount > calculated_total               THEN 'underreported_components'
-    ELSE                                                    'overcounted_components'
-END AS reconciliation_status
-This turns a data quality issue into a documented, queryable metric — which is exactly what a reviewer at Infinite Lambda would want to see.
+Answers the core business question: **where and when should drivers
+operate to maximize earnings?**
 
+Combines:
+- A single quantifiable number
+- Geographic dimension (zone → borough)
+- Temporal dimension (rush hour vs off-peak)
 
+Example insight: *"Thursday evening rush, Midtown → JFK = highest revenue
+per mile + longest duration = the single best shift for a driver"*
 
-The dataset is public TLC data so there's no real PII — but the most defensible choice for the interview is hashing, specifically on vendor_id.
-Here's the business justification: in a real production context, vendor_id maps to contractual commercial relationships between TLC and vendors (VeriFone, Creative Mobile, Helix). Revenue performance by vendor is commercially sensitive — you wouldn't want all analysts to see which vendor processes the most revenue or has the worst data quality. You'd hash it in marts exposed to wider audiences, keeping the raw mapping only in the raw/staging layer.
+---
 
+## Business Metric Definition
 
-This is actually what you've already built architecturally — the marts deliberately aggregate away from raw location IDs. You just need to make the intent explicit by adding policy tags in BigQuery and documenting it.
-That's a real data governance story: "We deliberately don't expose raw location IDs in marts because timestamp + precise zone = potential re-identification risk. Borough-level aggregation in the mart layer is intentional."
+**Primary metric: Gross Trip Revenue**
 
+> "Gross Trip Revenue is defined as the sum of total_amount for completed
+> trips paid by credit card or cash (payment types 1 and 2), excluding
+> disputed, voided, and zero-fare trips. Adjustments and disputes are
+> tracked separately for operational monitoring."
 
-"This is public data with no PII. However, I've implemented the architectural equivalent of access control — raw zone IDs and timestamps are only available in staging, marts deliberately expose borough-level aggregations. In a production context with real transaction IDs or driver IDs, I would implement hashing at the staging layer."
+### Payment Type Strategy
 
+| Payment Type | Include in Revenue? | Reason |
+|---|---|---|
+| 0 — Flex Fare | ✅ Yes | Real completed trip |
+| 1 — Credit Card | ✅ Yes | Real completed trip |
+| 2 — Cash | ✅ Yes | Real completed trip |
+| 3 — No Charge | ❌ No | No money exchanged |
+| 4 — Dispute | ❌ No | Contested, unresolved |
+| 5 — Unknown | ⚠️ Flagged | Cannot confirm |
+| 6 — Voided | ❌ No | Trip never happened |
 
-Back to PULocationID / DOLocationID — this is the real one. And the masking approach is actually already implemented in our architecture:
+### Why handle in dbt, not ingestion?
 
-Raw/staging layer → exact zone IDs (pu_location_id, do_location_id)
-Marts → borough level only (pu_borough, do_borough)
+```
+raw layer    → preserve everything including negatives and disputes
+staging      → flag invalid trips, no filtering yet
+fct_trips    → filter is_invalid_trip=FALSE, payment_type IN (1,2)
+marts        → clean revenue numbers for business metrics
+```
 
-That is masking. We're reducing precision deliberately.
-The only thing missing is making the intent explicit in dbt via column descriptions:
-yaml- name: pu_location_id
+Raw data is never modified — full auditability is preserved. If someone
+later wants to analyze disputes or voids, the data is always there in raw.
+
+---
+
+## Key Design Decisions
+
+### Why incremental fct_trips?
+New parquet files arrive monthly from TLC. Incremental model merges only
+new data rather than rebuilding the entire fact table on every run.
+On first run it builds the full table. On subsequent runs it processes
+only trips after MAX(pickup_datetime).
+
+### Why deduplicate in fct_trips?
+VendorID=2 (VeriFone) submits duplicate records — same trip recorded twice.
+ROW_NUMBER() partitioned by pickup_datetime, dropoff_datetime, location IDs,
+vendor, fare_amount, and total_amount keeps exactly one record per unique trip.
+
+### Why separate yellow and green staging?
+Green has different timestamp column names (lpep vs tpep), an extra
+trip_type column (street-hail vs dispatch), and no airport_fee column.
+Separate staging models handle these differences cleanly before unioning
+in the intermediate layer. Both models produce identical output schemas.
+
+### Why ALLOW_FIELD_ADDITION in Airflow?
+TLC added cbd_congestion_fee column in 2025. Airflow DAG uses schema
+autodetect + _sync_schema helper to automatically add new columns when
+they appear in incoming parquet files — no hardcoded schema required.
+
+---
+
+## Sensitive Data Handling
+
+### The Risk
+PULocationID + pickup_datetime combination creates **passenger
+re-identification risk**. If someone consistently picks up from zone 161
+(Upper East Side) at 8:47am every Monday going to JFK — that pattern
+identifies a real individual even in "anonymous" public data.
+This is called the **mosaic effect** — no single field is sensitive,
+but combined they form an identifying picture.
+
+### The Approach — Architectural Masking
+We deliberately reduce location precision across layers:
+
+```
+staging/facts  → exact zone IDs (pu_location_id, do_location_id)
+                 available to engineers only
+      ↓
+marts          → borough level only (pu_borough, do_borough)
+                 exposed to analysts
+```
+
+Analysts get what they need for business analysis (borough-level patterns)
+without the re-identification risk of exact zone + timestamp combinations.
+This is enforced architecturally — mart models never expose raw zone IDs.
+
+### Column Descriptions (in YAML)
+
+```yaml
+# staging — document the sensitivity
+- name: pu_location_id
   description: >
     Raw pickup zone ID. Masked to borough level in mart layer
     to prevent re-identification of individual passenger journeys
     via location + timestamp combination.
-And in marts:
-yaml- name: pu_borough
+
+# marts — document the intent
+- name: pu_borough
   description: >
     Pickup borough — masked aggregation of pu_location_id.
     Deliberately exposed at borough level only to protect passenger privacy.
-Interview story:
-"Location IDs combined with timestamps create re-identification risk. I mask exact zone IDs to borough level in the mart layer. This is enforced architecturally — analysts only have access to mart models which never expose raw zone IDs."
+```
 
+---
 
+## Fare Reconciliation
 
+`total_amount` is documented as the sum of all itemized components:
 
-📊 All Extractable Business Metrics
-💰 Revenue Metrics (Primary)
-MetricFormulaBusiness ValueRevenue per Mile ⭐total_amount / trip_distanceCore efficiency KPIRevenue per Minutetotal_amount / trip_duration_minTime efficiencyGross Revenue by ZoneSUM(total_amount) GROUP BY PULocationIDDemand heatmapAirport Revenue PremiumAvg total_amount where airport_fee > 0 vs standardPricing strategyRevenue by Rate TypeSUM(total_amount) GROUP BY RatecodeIDJFK vs standard mix
-🚗 Operational Metrics
-MetricFormulaBusiness ValueDriver Utilization (proxy) ⭐Trips per hour per zoneSupply/demand balanceAvg Trip Durationtpep_dropoff_datetime - tpep_pickup_datetimeOperational planningTrips per Time SlotCOUNT(*) GROUP BY HOUR(pickup)Peak hours detectionRush Hour vs Off-Peak Volumeextra > 0 flag analysisSurge pricing impact
-👤 Customer Metrics
-MetricFormulaBusiness ValueTip Ratetip_amount / fare_amountSatisfaction proxyRevenue per Passengertotal_amount / passenger_countYield per seatCash vs Card SplitCOUNT(*) GROUP BY payment_typePayment behaviorGroup Ride ShareTrips where RatecodeID = 6Pooling opportunity
-📍 Geographic Metrics
-MetricFormulaBusiness ValueTop Pickup ZonesCOUNT(*) GROUP BY PULocationIDHotspot analysisAvg Fare by BoroughJoin zone lookup → aggregateGeographic pricingAirport Trip Shareairport_fee > 0 as % of total trips~8% of yellow taxi rides have an airport fee Rowzero — baseline to beat
+| Component | Description |
+|---|---|
+| fare_amount | Time-and-distance fare from the meter |
+| extra | Miscellaneous extras and surcharges |
+| mta_tax | Tax triggered by the metered rate |
+| tip_amount | Credit card tips only — cash tips excluded |
+| tolls_amount | All tolls paid during the trip |
+| improvement_surcharge | Surcharge assessed at flag drop (since 2015) |
+| congestion_surcharge | NYS congestion surcharge |
+| airport_fee | Fee for pickups at LGA or JFK |
+| cbd_congestion_fee | MTA Congestion Relief Zone charge (since Jan 5, 2025) |
 
-🎯 Recommended North Star Metric for the Task
-Revenue per Mile by Zone & Time of Day — because it combines:
+### Known Vendor Reconciliation Issues
 
-A single quantifiable number ✅
-Geographic dimension (zones → boroughs) ✅
-Temporal dimension (rush hour vs off-peak) ✅
-Direct business decision: where and when should drivers operate?
+| VendorID | Vendor | Issue |
+|---|---|---|
+| 1 | Creative Mobile | Excludes congestion_surcharge from total_amount |
+| 2 | VeriFone | Submits duplicate records |
+| 6 | Myle Technologies | Null RatecodeID, malformed records |
+| 7 | Helix | Unitemized Newark surcharge included in total_amount |
 
+Rather than fixing total_amount, we expose the gap as a queryable metric:
 
-🗂️ Suggested dbt Model Structure
-raw.tlc_trips
-    ↓
-stg_tlc__trips          -- clean types, derived duration, trip_revenue
-stg_tlc__zones          -- zone → borough lookup (joinable)
-    ↓
-fct_trips               -- grain: 1 row per trip
-dim_zones               -- PULocationID/DOLocationID enrichment
-dim_time                -- hour, day_of_week, is_rush_hour
-    ↓
-mart_driver_performance -- revenue_per_mile, utilization_rate
-mart_zone_demand        -- trips/revenue by zone & time slot
+```sql
+{{ calculate_fare_components() }}          AS calculated_total,
+total_amount - calculated_total            AS reporting_gap,
+CASE
+    WHEN ABS(reporting_gap) <= 0.01 THEN 'reconciled'
+    WHEN total_amount > calculated_total  THEN 'underreported_components'
+    ELSE                                       'overcounted_components'
+END                                        AS reconciliation_status
+```
 
+---
 
+## Data Quality
 
-✅ Final Metric Set
-🌟 North Star
+### dbt Tests
+- 35 tests across staging and fact layers
+- Built-in tests: not_null, unique, accepted_values, relationships
+- 3 singular tests for business-specific rules:
 
-Revenue per Mile — by Zone & Time of Day
+| Test | Purpose |
+|---|---|
+| assert_total_amount_reconciles | Catches vendors with unexplained fare gaps |
+| assert_no_negative_revenue_in_facts | Confirms invalid trip filter works |
+| assert_green_has_no_airport_trips | Enforces green taxi business rule |
 
-💰 Revenue
+### Known Data Quality Issues
 
-Gross Revenue by Zone / Borough
-Airport Revenue Premium
-Revenue by Rate Type (JFK vs Standard vs Newark)
+| Issue | Detail |
+|---|---|
+| Fare reconciliation gaps | VendorID 1, 2, 6, 7 include unitemized charges in total_amount |
+| Duplicate records | VendorID=2 (VeriFone) submits identical trip records |
+| Schema evolution | cbd_congestion_fee added in 2025 — NULL for all 2024 records |
+| Negative amounts | Disputed/voided trips (payment_type 4, 6) produce negative fares |
 
-🚗 Operational
+---
 
-Avg Trip Duration ⭐ (new)
-Driver Utilization (trips per hour per zone)
-Rush Hour vs Off-Peak Volume
+## Macros
 
-📅 Demand Patterns
-
-Busiest Days of Week ⭐ (new) — COUNT(*) GROUP BY DAY_OF_WEEK(pickup)
-Trips by Hour of Day
-Peak Zone by Day/Hour combo
-
-👤 Customer
-
-Tip Rate
-Revenue per Passenger
-Cash vs Card Split
-
-
-🗺️ How Trip Duration & Busiest Days Strengthen the Story
-Trip Duration  →  reveals where drivers LOSE time (long trips, low $/mile)
-Busiest Days   →  tells operations WHEN to deploy more supply
-Combined       →  "Thursday rush hour, Midtown → JFK = highest $/mile + longest duration"
-                   = the single best shift for a driver
-This gives you a complete operations intelligence story: where, when, and how long — all feeding into the north star of Revenue per Mile.
+| Macro | Purpose | Used In |
+|---|---|---|
+| calculate_fare_components(airport_fee) | Sums all fare components, optional airport_fee param | stg_yellow, stg_green |
+| classify_time_of_day(column) | Returns morning_rush, evening_rush, overnight, off_peak | dim_time |
+| revenue_per(numerator, denominator) | SAFE_DIVIDE wrapper for revenue metrics | fct_trips |
+| hash_sensitive_field(column) | SHA256 hashing for sensitive fields | staging |

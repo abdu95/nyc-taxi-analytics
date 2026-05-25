@@ -39,7 +39,8 @@ SELECT
     )                                                   AS trip_duration_min,
 
     -- derived: reconciliation 
-    {{ calculate_fare_components() }}                   AS calculated_total,
+    {{ calculate_fare_components('Airport_fee') }}   AS calculated_total,
+
 
     total_amount - {{ calculate_fare_components() }}    AS reporting_gap,
 

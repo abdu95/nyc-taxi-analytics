@@ -1,7 +1,26 @@
+# Python
 venv/
-logs/
-gcp/
-.env
 __pycache__/
 *.pyc
+*.pyo
+.env
+*.env
+
+# dbt
+nyc_taxi_dbt/target/
+nyc_taxi_dbt/dbt_packages/
+nyc_taxi_dbt/logs/
+nyc_taxi_dbt/.user.yml
+
+# Airflow
+logs/
+*.db
+*.cfg
+
+# GCP credentials — never commit these
+gcp/
+*.json
+
+# OS
 .DS_Store
+Thumbs.db

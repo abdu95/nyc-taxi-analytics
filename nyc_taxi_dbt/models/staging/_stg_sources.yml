@@ -14,20 +14,24 @@ models:
     description: "Cleaned and flagged yellow taxi trips from raw source"
     columns:
       - name: vendor_id
+        description: "TPEP provider ID. 1=Creative Mobile, 2=VeriFone, 6=Myle Technologies, 7=Helix"
         tests: [not_null]
       - name: pickup_datetime
+        description: "Timestamp when meter was engaged. Sensitive — combined with location enables re-identification"
         tests: [not_null]
       - name: dropoff_datetime
         tests: [not_null]
       - name: total_amount
         tests: [not_null]
       - name: pu_location_id
+        description: "TLC taxi zone ID for pickup. Sensitive — masked to borough level in mart layer"
         tests:
           - not_null
           - relationships:
               to: ref('dim_zones')
               field: location_id
       - name: do_location_id
+        description: "TLC taxi zone ID for dropoff. Sensitive — masked to borough level in mart layer"
         tests:
           - not_null
           - relationships:
@@ -43,30 +47,40 @@ models:
           - accepted_values:
               values: ['yellow']
       - name: is_invalid_trip
+        description: "TRUE if fare/distance/duration/passengers <= 0. Used to filter invalid trips in fct_trips"
         tests: [not_null]
       - name: reconciliation_status
+        description: "Whether total_amount matches sum of fare components. Known non-conforming vendors: 1, 2, 6, 7"
         tests:
           - accepted_values:
               values: ['reconciled', 'underreported_components', 'overcounted_components']
+      - name: calculated_total
+        description: "Sum of all itemized fare components. Used to detect vendor reporting gaps"
+      - name: reporting_gap
+        description: "Difference between total_amount and calculated_total. Positive = unitemized charges"
 
   - name: stg_green_tripdata
     description: "Cleaned and flagged green taxi trips from raw source"
     columns:
       - name: vendor_id
+        description: "LPEP provider ID"
         tests: [not_null]
       - name: pickup_datetime
+        description: "Timestamp when meter was engaged. Sensitive — combined with location enables re-identification"
         tests: [not_null]
       - name: dropoff_datetime
         tests: [not_null]
       - name: total_amount
         tests: [not_null]
       - name: pu_location_id
+        description: "TLC taxi zone ID for pickup. Sensitive — masked to borough level in mart layer"
         tests:
           - not_null
           - relationships:
               to: ref('dim_zones')
               field: location_id
       - name: do_location_id
+        description: "TLC taxi zone ID for dropoff. Sensitive — masked to borough level in mart layer"
         tests:
           - not_null
           - relationships:
@@ -84,9 +98,14 @@ models:
       - name: is_invalid_trip
         tests: [not_null]
       - name: trip_type
+        description: "Green-only. 1=Street-hail, 2=Dispatch"
         tests:
           - accepted_values:
               values: [1, 2]
               quote: false # generate the values without quotes
               config:
                 severity: warn  # warn only — nulls expected for some records
+      - name: is_airport_trip
+        description: "Always FALSE for green taxis — green taxis cannot pick up at airports"
+      - name: airport_fee
+        description: "Always NULL for green taxis — green taxis cannot pick up at airports"
