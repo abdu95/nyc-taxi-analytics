@@ -66,8 +66,6 @@ dbt docs serve
 
 ## ERD
 
-## ERD
-
 ```mermaid
 erDiagram
   taxi_zone_lookup {
