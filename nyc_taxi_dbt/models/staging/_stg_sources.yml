@@ -2,6 +2,7 @@ version: 2
 
 sources:
   - name: raw_taxi_dataset
+    description: "Raw NYC TLC taxi trip data ingested monthly from TLC parquet files via Airflow. Contains yellow and green taxi trips from 2024 onwards."
     database: nyc-taxi-gcp-494519
     schema: raw_taxi_dataset
     tables:
