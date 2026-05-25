@@ -177,6 +177,43 @@ feature/add-reconciliation-metrics
 - dbt tests must pass before any PR is merged
 
 
+
+# CI/CD Pipeline
+
+Automated testing via GitHub Actions on every Pull Request to `dev` and `main`.
+
+## Workflow
+
+```
+feature branch → PR to dev → GitHub Actions runs dbt test → merge if green
+dev            → PR to main → GitHub Actions runs dbt test → merge if green
+```
+
+## What the pipeline does
+
+1. Checks out the code
+2. Installs Python and dbt-bigquery
+3. Authenticates to GCP using a service account key stored as a GitHub Secret
+4. Runs `dbt deps` to install packages
+5. Runs `dbt compile` to catch syntax errors
+6. Runs `dbt test --select staging` to validate data quality
+
+
+![dbt checks in Pull Request](ci-cd-checks.png)
+
+
+## Why staging only in CI?
+
+- Fast — completes in under 30 seconds
+- Catches the most common breakage — column renames, source changes, type mismatches
+- Fact and mart tests depend on large tables — too slow and expensive for every PR
+
+## Secrets management
+
+- GCP service account key stored as `GCP_SERVICE_ACCOUNT_KEY` GitHub Secret
+- Never committed to the repository
+- `.gitignore` excludes the `gcp/` folder containing credentials
+
 ---
 
 ## North Star Metric
