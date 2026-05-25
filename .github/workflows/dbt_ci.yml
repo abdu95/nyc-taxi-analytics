@@ -37,7 +37,7 @@ jobs:
                 type: bigquery
                 method: service-account
                 project: nyc-taxi-gcp-494519
-                dataset: dbt_taxi_dataset_ci
+                dataset: dbt_taxi_dataset
                 location: US
                 threads: 4
                 keyfile: /tmp/keyfile.json
