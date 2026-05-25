@@ -1,3 +1,4 @@
+-- Reconciliation gap documented: known non-conforming vendors 1, 2, 6, 7
 SELECT
     pu_borough,
     rate_code_desc,
