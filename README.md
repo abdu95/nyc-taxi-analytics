@@ -1,4 +1,71 @@
-# NYC Taxi Analytics — Architecture
+# NYC Taxi Analytics 
+
+
+## Introduction
+
+This project builds an end-to-end analytics pipeline on the NYC Taxi and Limousine
+Commission (TLC) trip dataset — one of the largest and most detailed public
+transportation datasets in the world, covering millions of yellow and green taxi
+trips across New York City from 2024 onwards.
+
+
+The dataset was chosen for three reasons. 
+
+1. It is rich enough to support meaningful business analytics — every trip record contains fare components,
+timestamps, pickup and dropoff locations, payment behavior, and distance, which
+together enable a complete revenue and operational intelligence story. 
+2. It has real-world data quality challenges — schema evolution across years,
+vendor-specific reporting inconsistencies, duplicate records, and fare
+reconciliation gaps — which make it an honest test of engineering decisions rather
+than a clean textbook exercise. 
+3. It is publicly available, meaning the
+pipeline can be fully demonstrated without confidentiality concerns.
+The business question driving the project is straightforward:
+where and when should a driver operate to maximize revenue?
+This is answered through a single North Star metric — Revenue per Mile by Zone
+and Time of Day — supported by a full suite of revenue, operational, demand, and
+customer metrics delivered through a live Looker Studio dashboard.
+
+The sections below document the architecture, modeling decisions, data quality
+findings, and operational practices that make up the complete solution.
+
+
+## Table of Contents
+
+- [Dashboard](#dashboard)
+- [Architecture](#architecture)
+- [Documentation](#documentation)
+- [Git Branching Strategy](#git-branching-strategy)
+- [CI/CD Pipeline](#cicd-pipeline)
+- [Metrics](#metrics)
+
+
+# Dashboard
+
+Live dashboard built in Looker Studio, connected directly to BigQuery mart models.
+
+🔗 [NYC Taxi Analytics Dashboard](https://datastudio.google.com/reporting/6ba53078-fcd9-43b5-b372-e1bf616a2ab4)
+
+### Pages
+
+| Page | Source Model | Key Metrics |
+|---|---|---|
+| North Star | mart_zone_demand | Revenue per mile by borough and time slot |
+| Revenue | mart_revenue | Gross revenue, airport premium, revenue by rate type |
+| Demand Patterns | mart_demand_patterns | Busiest days, trips by hour, demand rank |
+| Operational | mart_driver_performance | Avg trip duration, utilization by zone and hour |
+| Customer | mart_customer_behavior | Tip rate, cash vs card split, revenue per passenger |
+
+### Key Insight
+
+Evening rush hour in Manhattan generates the highest revenue per mile across
+all boroughs and time slots — meaning drivers maximize earnings by staying
+in Manhattan between 5-7pm rather than taking long Newark or JFK trips
+during off-peak hours.
+
+
+# Architecture
+
 
 ## Stack
 - **Ingestion**: Airflow + Python → GCS → BigQuery
@@ -215,6 +282,7 @@ dev            → PR to main → GitHub Actions runs dbt test → merge if gree
 - `.gitignore` excludes the `gcp/` folder containing credentials
 
 ---
+# Metrics 
 
 ## North Star Metric
 
